@@ -1,0 +1,18 @@
+diff --git a/core/hle/service/am/applets/mii_edit.cpp b/core/hle/service/am/applets/mii_edit.cpp
+index 2211519..a1510ed 100644
+--- a/core/hle/service/am/applets/mii_edit.cpp
++++ b/core/hle/service/am/applets/mii_edit.cpp
+@@ -14,6 +14,14 @@ MiiEdit::MiiEdit(Core::System& system_) : Applet{system_} {}
+ MiiEdit::~MiiEdit() = default;
+ 
+ void MiiEdit::Initialize() {
++    // Bypass for Orbis Eden - Forces immediate success back to Mario Kart 8
++    MiiDummyOutput dummy_out{};
++    std::memset(&dummy_out, 0, sizeof(dummy_out));
++    dummy_out.magic = 0x444d4949; // 'MIID' dummy magic
++    dummy_out.result = 0;         // Success Code
++    
++    WriteOutputData(&dummy_out, sizeof(dummy_out));
++    ExitApplet();
+     Applet::Initialize();
+ }

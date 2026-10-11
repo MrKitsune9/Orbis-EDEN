@@ -1,0 +1,56 @@
+LABORATORIO DE CORES (patch 0030)  -  Orbis Eden / NX on Orbis
+================================================================
+
+AVISO: este patch NAO foi compilado nem testado em console (eu nao tenho PS4).
+Se o build der erro, copie as ultimas 30 linhas do erro e me mande.
+
+O QUE E
+-------
+Duas chaves novas no settings.txt para descobrir onde o vermelho e o azul trocam,
+sem recompilar a cada teste:
+  swapwrite=  troca vermelho/azul no que os shaders ESCREVEM
+  swapview=   troca vermelho/azul quando as texturas sao LIDAS
+Nada muda se voce nao criar o settings.txt (o comportamento padrao continua igual).
+
+PARTE 1 - COMPILAR (uma vez, uns 10 a 20 minutos)
+-------------------------------------------------
+1. Abra este zip e copie para o repo (C:\nxorbis\repo), aceitando substituir:
+     patches\eden\0030-PS4-color-lab-swapwrite-and-swapview-switches.patch
+     frontend\main.cpp
+2. No Git Bash:
+
+   cd /c/nxorbis/repo/deps/eden
+   git am --keep-cr ../../patches/eden/0030-PS4-color-lab-swapwrite-and-swapview-switches.patch
+   cd /c/nxorbis/repo
+   source tools/env-build.sh && unset OO_PS4_TOOLCHAIN
+   cmake --build build-eden --target eden-ps4
+   bash package-eden.sh
+
+   (o build refaz so os arquivos que mudaram; nao e o build de 1 a 3 horas)
+3. Instale o novo .pkg no PS4 por cima do atual.
+   Se o "git am" falhar, me mande a mensagem de erro.
+
+PARTE 2 - TESTAR
+----------------
+Cada pasta em "testes" tem um settings.txt pronto. Para cada teste:
+  a) copie o settings.txt da pasta para /data/edenps4/ no PS4 (substitui o anterior);
+  b) abra o jogo e espere a tela de titulo;
+  c) olhe 3 coisas e anote (ou grave o video):
+       - o Mario/Luigi: o bone do Mario esta vermelho (certo) ou azul (errado)?
+       - o ceu e o cenario: parecem certos? (no NSMBU o ceu e azul)
+       - a interface: menus, textos e logos continuam com as cores certas?
+  d) feche com o botao PS e va para o proximo teste.
+Se o jogo travar ou fechar sozinho num teste, guarde o boot.log desse teste e me mande.
+
+JOGO DE TESTE: New Super Mario Bros. U Deluxe  ->  testes T1, T2, T3, T4, T5
+               Mario Kart 8 Deluxe             ->  testes T1, T6, T7, T8
+Comece pelo T1: e o mais provavel de ja resolver.
+
+COMO EU LEIO O RESULTADO
+------------------------
+ 3D certo e interface certa ........ achamos um conserto; viro padrao
+ 3D certo mas interface errada ..... a troca esta na etapa que serve a interface tambem
+ nada mudou ........................ a causa nao e essa; passo para a proxima pista
+ 3D ficou ainda mais errado ........ tambem me ajuda (a causa fica mais clara)
+
+Me mande, para cada teste: o numero, o que viu nas 3 coisas, e o video se puder.

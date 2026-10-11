@@ -1,0 +1,2 @@
+# Teste 1: troca vermelho/azul na saida das cenas 3D (as que tem buffer de profundidade)
+swapwrite=depth

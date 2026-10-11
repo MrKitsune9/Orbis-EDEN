@@ -1,0 +1,2 @@
+# Teste 5: troca vermelho/azul na saida de todos os alvos RGBA de 8 bits
+swapwrite=a8

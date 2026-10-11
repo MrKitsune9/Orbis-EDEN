@@ -1,0 +1,107 @@
+name: Compilar PKG (NX on Orbis)
+
+# Roda só quando você clicar em "Run workflow" na aba Actions.
+on:
+  workflow_dispatch:
+    inputs:
+      limpar_cache:
+        description: "Começar do zero (ignora o que foi guardado de outras execuções)"
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Baixar este repositório
+        uses: actions/checkout@v4
+
+      - name: Preparar pastas
+        run: mkdir -p logs
+
+      - name: Recuperar ferramentas guardadas (SDK, libc++, OpenSSL, FFmpeg)
+        id: cache-tools
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            sdk-dl
+            deps/OpenOrbis
+            deps/oo-release
+            libcxx18
+            prefix
+          key: ferramentas-v1-${{ inputs.limpar_cache && github.run_id || 'padrao' }}
+
+      - name: Recuperar compilação anterior do Eden
+        uses: actions/cache/restore@v4
+        if: ${{ !inputs.limpar_cache }}
+        with:
+          path: |
+            build-eden
+            deps/eden
+            .ccache
+          key: eden-${{ github.run_id }}
+          restore-keys: eden-
+
+      - name: 05 - Preparar o servidor
+        run: bash ci/05-prepare.sh 2>&1 | tee logs/05-prepare.log
+
+      - name: 10 - Adaptar scripts do Windows para Linux
+        run: bash ci/10-linuxify.sh 2>&1 | tee logs/10-linuxify.log
+
+      - name: 20 - Baixar SDK do PS4 e OpenOrbis
+        run: bash ci/20-sdk.sh 2>&1 | tee logs/20-sdk.log
+
+      - name: 30 - Compilar libc++ para PS4
+        run: bash ci/30-libcxx.sh 2>&1 | tee logs/30-libcxx.log
+
+      - name: 40 - Compilar OpenSSL e FFmpeg para PS4
+        run: bash ci/40-openssl-ffmpeg.sh 2>&1 | tee logs/40-openssl-ffmpeg.log
+
+      - name: Guardar ferramentas para as próximas execuções
+        if: ${{ always() && steps.cache-tools.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            sdk-dl
+            deps/OpenOrbis
+            deps/oo-release
+            libcxx18
+            prefix
+          key: ferramentas-v1-${{ inputs.limpar_cache && github.run_id || 'padrao' }}
+
+      - name: 60 - Compilar o Eden (demora; limite de 5 h, depois continua na próxima execução)
+        timeout-minutes: 300
+        run: bash ci/60-eden.sh 2>&1 | tee logs/60-eden.log
+
+      - name: Guardar compilação do Eden
+        if: ${{ always() }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build-eden
+            deps/eden
+            .ccache
+          key: eden-${{ github.run_id }}
+
+      - name: 70 - Gerar o .pkg
+        run: bash ci/70-package.sh 2>&1 | tee logs/70-package.log
+
+      - name: Anexar o PKG e o ELF para download
+        uses: actions/upload-artifact@v4
+        with:
+          name: PKG-e-ELF
+          path: |
+            out-eden/
+            elf/
+          if-no-files-found: error
+
+      - name: Anexar os logs (sempre)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs/
+          if-no-files-found: ignore

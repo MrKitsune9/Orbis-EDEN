@@ -1,0 +1,52 @@
+From 88d1a4e41bebaf1269afe920f1ddeae5404baa3b Mon Sep 17 00:00:00 2001
+From: NX on Orbis <noreply@localhost>
+Date: Thu, 8 Oct 2026 19:16:32 -0300
+Subject: [PATCH] PS4: 128 MiB stream buffer and no mismatched A2R10G10B10
+ render-target views
+
+The stream buffer is a 256 MiB GARLIC allocation outside the driver arena (the port builds with
+-U__FreeBSD__, so Eden's own 128 MiB FreeBSD setting never applied); halving it frees direct
+memory that races run out of while loading. The A2R10G10B10 render-target view override changed
+only the view format while the render pass kept the PixelFormat-derived one, which would make an
+invalid framebuffer if the A2B10G10R10 self-test ever enabled it; it is no longer applied.
+---
+ src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp | 4 +++-
+ src/video_core/renderer_vulkan/vk_texture_cache.cpp       | 7 ++++---
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
+index 7b6571d..0347a2d 100644
+--- a/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
++++ b/src/video_core/renderer_vulkan/vk_staging_buffer_pool.cpp
+@@ -33,7 +33,9 @@ constexpr VkDeviceSize MAX_ALIGNMENT = 256;
+ // Windows ones however, can intake bigger buffers and generally do not OOM.
+ // - GTX 960 on Windows will not OOM with 256mib
+ // - GT 1030 on ^NIX will OOM with 256mib
+-#if defined(__FreeBSD__)
++// PS4: the port builds with -U__FreeBSD__, so it would take the 256 MiB branch; that buffer is a
++// GARLIC allocation outside the driver arena and a race load runs direct memory out (STATUS.md).
++#if defined(__FreeBSD__) || defined(__ORBIS__)
+ constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 128_MiB;
+ #else
+ constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 256_MiB;
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 133e73a..dba27a5 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3502,9 +3502,10 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+     }
+     if (format_info.format == VK_FORMAT_A2B10G10R10_UNORM_PACK32) {
+         if (info.IsRenderTarget()) {
+-            if (ps4_a2b10_rt_use_a2r10) {
+-                format_info.format = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+-            }
++            // Not applied: the render pass (vk_render_pass_cache.cpp) and the pipelines take the
++            // attachment format from the PixelFormat, so a render-target view in another VkFormat
++            // would not match them (invalid framebuffer). ps4_a2b10_rt_use_a2r10 stays unused
++            // until the PixelFormat -> VkFormat mapping itself carries the override.
+         } else if (ps4_a2b10_sample_use_a2r10) {
+             format_info.format = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+         } else if (ps4_a2b10_sample_swap || ps4_a2b10_force == 1) {
+-- 
+2.43.0
+

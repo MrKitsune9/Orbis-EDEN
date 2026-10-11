@@ -1,0 +1,2 @@
+# Teste 4: troca vermelho/azul ao LER imagens que a GPU desenhou
+swapview=gpu

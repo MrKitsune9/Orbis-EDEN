@@ -1,0 +1,247 @@
+From b295db7ce3927263ff3fdc5a6c577774390366a5 Mon Sep 17 00:00:00 2001
+From: NX on Orbis <noreply@localhost>
+Date: Sun, 11 Oct 2026 13:59:47 -0300
+Subject: [PATCH] PS4: color lab, swapwrite= and swapview= switches to find
+ (and work around) the red/blue swap
+
+settings.txt swapwrite=a8,a2,r11,f16,depth,all exchanges red and blue in what fragment shaders
+store into the chosen color targets (and in the color write mask); swapview=a8,bc,a2,r11,f16,gpu,all
+exchanges them in the component mapping of the chosen sampled views. a2b10=write|sample keep
+working. Everything is off by default. See ps4_color_lab.h.
+---
+ .../renderer_vulkan/ps4_color_lab.h           | 80 +++++++++++++++++++
+ .../renderer_vulkan/vk_graphics_pipeline.cpp  | 13 ++-
+ .../renderer_vulkan/vk_pipeline_cache.cpp     | 16 ++--
+ .../renderer_vulkan/vk_texture_cache.cpp      | 35 ++++++++
+ 4 files changed, 129 insertions(+), 15 deletions(-)
+ create mode 100644 src/video_core/renderer_vulkan/ps4_color_lab.h
+
+diff --git a/src/video_core/renderer_vulkan/ps4_color_lab.h b/src/video_core/renderer_vulkan/ps4_color_lab.h
+new file mode 100644
+index 0000000..a723d27
+--- /dev/null
++++ b/src/video_core/renderer_vulkan/ps4_color_lab.h
+@@ -0,0 +1,80 @@
++// SPDX-FileCopyrightText: 2026 NX on Orbis contributors
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++// PS4 "color lab" (patch 0030): settings.txt switches to find where the red/blue swap of 3D scenes
++// and videos comes from, and to work around it once it is known. Everything here is off unless
++// settings.txt asks for it.
++//
++//   swapwrite=<tokens>   red and blue are exchanged in what fragment shaders STORE into color
++//                        attachments (and in the color write mask). Tokens, comma separated:
++//                          a8     A8B8G8R8 / A8R8G8B8 (8 bit RGBA) targets
++//                          a2     A2B10G10R10 targets
++//                          r11    B10G11R11 float targets
++//                          f16    R16G16B16A16 float targets
++//                          depth  every color target of a draw that has a depth buffer bound
++//                                 (3D passes; UI and video passes normally have none)
++//                          all    every color target
++//   swapview=<tokens>    red and blue are exchanged in the component mapping of SAMPLED views
++//                        (render-target and depth views are never touched). Tokens:
++//                          a8     A8B8G8R8 / B8G8R8A8 views
++//                          bc     BC1, BC2, BC3, BC6H and BC7 views (not BC4/BC5: not color)
++//                          a2     A2B10G10R10 views
++//                          r11    B10G11R11 views
++//                          f16    R16G16B16A16 float views
++//                          gpu    views of images the GPU has rendered into
++//                          all    every sampled color view
++//
++// Swapping on write is a compensation: whatever later turns the picture around swaps it back.
++#pragma once
++
++#include "common/common_types.h"
++
++namespace Vulkan {
++
++extern int ps4_a2b10_force; // vk_texture_cache.cpp
++extern u32 ps4_swapwrite;   // vk_texture_cache.cpp
++extern u32 ps4_swapview;    // vk_texture_cache.cpp
++
++namespace Ps4ColorLab {
++
++inline constexpr u32 A8 = 1u << 0;
++inline constexpr u32 BC = 1u << 1;
++inline constexpr u32 A2 = 1u << 2;
++inline constexpr u32 R11 = 1u << 3;
++inline constexpr u32 F16 = 1u << 4;
++inline constexpr u32 DEPTH = 1u << 5;
++inline constexpr u32 GPU = 1u << 6;
++inline constexpr u32 ALL = 1u << 7;
++
++/// Should the color attachment with this raw Maxwell RenderTargetFormat get red and blue
++/// exchanged on write? `depth_bound` is whether the draw has a depth buffer.
++[[nodiscard]] inline bool WriteSwap(u8 format, bool depth_bound) {
++    if (ps4_a2b10_force == 2 && format == 0xD1) { // A2B10G10R10_UNORM (a2b10=write)
++        return true;
++    }
++    const u32 mask = ps4_swapwrite;
++    if (mask == 0 || format == 0) { // 0 = NONE
++        return false;
++    }
++    if ((mask & ALL) != 0 || ((mask & DEPTH) != 0 && depth_bound)) {
++        return true;
++    }
++    switch (format) {
++    case 0xCF: // A8R8G8B8_UNORM
++    case 0xD0: // A8R8G8B8_SRGB
++    case 0xD5: // A8B8G8R8_UNORM
++    case 0xD6: // A8B8G8R8_SRGB
++        return (mask & A8) != 0;
++    case 0xD1: // A2B10G10R10_UNORM
++        return (mask & A2) != 0;
++    case 0xE0: // B10G11R11_FLOAT
++        return (mask & R11) != 0;
++    case 0xCA: // R16G16B16A16_FLOAT
++        return (mask & F16) != 0;
++    default:
++        return false;
++    }
++}
++
++} // namespace Ps4ColorLab
++} // namespace Vulkan
+diff --git a/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp b/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+index 9c1c8c2..e5b8863 100644
+--- a/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
++++ b/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+@@ -27,6 +27,9 @@
+ #include "video_core/shader_notify.h"
+ #include "video_core/texture_cache/texture_cache.h"
+ #include "video_core/vulkan_common/vulkan_device.h"
++#ifdef __ORBIS__
++#include "video_core/renderer_vulkan/ps4_color_lab.h"
++#endif
+ #include "video_core/gpu_logging/gpu_logging.h"
+ #include "common/settings.h"
+ 
+@@ -37,9 +40,6 @@
+ #endif
+ 
+ namespace Vulkan {
+-#ifdef __ORBIS__
+-extern int ps4_a2b10_force; // vk_texture_cache.cpp
+-#endif
+ namespace {
+ using boost::container::small_vector;
+ using boost::container::static_vector;
+@@ -933,10 +933,9 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
+             write_mask |= mask[i] ? mask_table[i] : 0;
+         }
+ #ifdef __ORBIS__
+-        if (ps4_a2b10_force == 2 &&
+-            static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[index]) ==
+-                Tegra::RenderTargetFormat::A2B10G10R10_UNORM) {
+-            // Matches the red/blue swap the shader applies to its output (a2b10=write).
++        if (Ps4ColorLab::WriteSwap(key.state.color_formats[index],
++                                   key.state.depth_enabled.Value() != 0)) {
++            // Matches the red/blue swap the shader applies to its output (a2b10=write, swapwrite=).
+             const VkColorComponentFlags r = write_mask & VK_COLOR_COMPONENT_R_BIT;
+             const VkColorComponentFlags b = write_mask & VK_COLOR_COMPONENT_B_BIT;
+             write_mask = (write_mask & ~(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT)) |
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 226b09e..d2d51c6 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -45,6 +45,9 @@
+ #include "video_core/shader_notify.h"
+ #include "video_core/surface.h"
+ #include "video_core/vulkan_common/vulkan_device.h"
++#ifdef __ORBIS__
++#include "video_core/renderer_vulkan/ps4_color_lab.h"
++#endif
+ #include "video_core/vulkan_common/vulkan_wrapper.h"
+ #include "video_core/gpu_logging/gpu_logging.h"
+ 
+@@ -54,9 +57,6 @@
+ 
+ namespace Vulkan {
+ 
+-#ifdef __ORBIS__
+-extern int ps4_a2b10_force; // vk_texture_cache.cpp
+-#endif
+ 
+ namespace {
+ using Shader::Backend::SPIRV::EmitSPIRV;
+@@ -273,12 +273,12 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
+             }
+         }
+ #ifdef __ORBIS__
+-        if (ps4_a2b10_force == 2) {
+-            // settings.txt a2b10=write: red and blue swapped on what the game's shaders store
+-            // into A2B10G10R10 targets (the read side stays as it is).
++        if (ps4_a2b10_force == 2 || ps4_swapwrite != 0) {
++            // settings.txt a2b10=write / swapwrite=: red and blue swapped on what the game's
++            // shaders store into the selected color targets (see ps4_color_lab.h).
+             for (size_t i = 0; i < 8; ++i) {
+-                const auto format = static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[i]);
+-                if (format == Tegra::RenderTargetFormat::A2B10G10R10_UNORM) {
++                if (Ps4ColorLab::WriteSwap(key.state.color_formats[i],
++                                           key.state.depth_enabled.Value() != 0)) {
+                     info.color_output_swap_rb |= static_cast<u8>(1u << i);
+                 }
+             }
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index dba27a5..a0060d7 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -25,6 +25,7 @@
+ #include "video_core/engines/fermi_2d.h"
+ #include "video_core/renderer_vulkan/blit_image.h"
+ #include "video_core/renderer_vulkan/maxwell_to_vk.h"
++#include "video_core/renderer_vulkan/ps4_color_lab.h"
+ #include "video_core/renderer_vulkan/vk_compute_pass.h"
+ #include "video_core/renderer_vulkan/vk_render_pass_cache.h"
+ #include "video_core/renderer_vulkan/vk_scheduler.h"
+@@ -84,6 +85,9 @@ bool ps4_a2b10_sample_swap = false;
+ // Exactly one of them should turn MK8D's red/blue-swapped images right if the swap happens on
+ // that side; both at once cancel out.
+ int ps4_a2b10_force = 0;
++// Color lab (patch 0030, settings.txt swapwrite= / swapview=): bit masks of Ps4ColorLab tokens.
++u32 ps4_swapwrite = 0;
++u32 ps4_swapview = 0;
+ // Component mappings, measured at startup (Ps4SwizzleSelfTest): for each permutation of R,G,B,A
+ // that a guest view asks for on an 8-bit RGBA image, the mapping to hand the driver instead so
+ // that it samples what was asked. Empty when the driver applies every permutation correctly.
+@@ -3512,6 +3516,37 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+             std::ranges::transform(swizzle, swizzle.begin(), SwapBlueRed);
+         }
+     }
++    if (ps4_swapview != 0 && !info.IsRenderTarget() &&
++        (aspect_mask & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) == 0) {
++        // Color lab (patch 0030): swapview= tokens, see ps4_color_lab.h.
++        const VkFormat vkf = format_info.format;
++        const u32 mask = ps4_swapview;
++        bool swap = (mask & Ps4ColorLab::ALL) != 0;
++        if (!swap && (mask & Ps4ColorLab::A8) != 0) {
++            swap = vkf == VK_FORMAT_A8B8G8R8_UNORM_PACK32 ||
++                   vkf == VK_FORMAT_A8B8G8R8_SRGB_PACK32 || vkf == VK_FORMAT_B8G8R8A8_UNORM ||
++                   vkf == VK_FORMAT_B8G8R8A8_SRGB;
++        }
++        if (!swap && (mask & Ps4ColorLab::BC) != 0) {
++            swap = (vkf >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && vkf <= VK_FORMAT_BC3_SRGB_BLOCK) ||
++                   (vkf >= VK_FORMAT_BC6H_UFLOAT_BLOCK && vkf <= VK_FORMAT_BC7_SRGB_BLOCK);
++        }
++        if (!swap && (mask & Ps4ColorLab::A2) != 0) {
++            swap = vkf == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
++        }
++        if (!swap && (mask & Ps4ColorLab::R11) != 0) {
++            swap = vkf == VK_FORMAT_B10G11R11_UFLOAT_PACK32;
++        }
++        if (!swap && (mask & Ps4ColorLab::F16) != 0) {
++            swap = vkf == VK_FORMAT_R16G16B16A16_SFLOAT;
++        }
++        if (!swap && (mask & Ps4ColorLab::GPU) != 0) {
++            swap = True(image.flags & ImageFlagBits::GpuModified);
++        }
++        if (swap) {
++            std::ranges::transform(swizzle, swizzle.begin(), SwapBlueRed);
++        }
++    }
+ #endif
+     if (device->ApiVersion() >= VK_API_VERSION_1_3) {
+         const VkFormatProperties3 properties3 =
+-- 
+2.43.0
+

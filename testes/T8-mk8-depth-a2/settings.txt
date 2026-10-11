@@ -1,0 +1,2 @@
+# Teste 8 (so Mario Kart 8): 3D e videos
+swapwrite=depth,a2

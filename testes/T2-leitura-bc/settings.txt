@@ -1,0 +1,2 @@
+# Teste 2: troca vermelho/azul ao LER texturas comprimidas BC
+swapview=bc

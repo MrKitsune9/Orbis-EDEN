@@ -1,0 +1,144 @@
+From 8764c0bcc28c58b97b6e59e51133c7ff72bc3862 Mon Sep 17 00:00:00 2001
+From: NX on Orbis <noreply@localhost>
+Date: Thu, 8 Oct 2026 18:57:28 -0300
+Subject: [PATCH] PS4: a2b10=sample|write color experiment (force red/blue swap
+ on the read or write side of A2B10G10R10)
+
+The A2B10G10R10 self-test only uses blits, which never go through a game's own fragment
+shaders, so it cannot see where MK8D's red/blue swap comes from. settings.txt a2b10=sample
+swaps red/blue when A2B10G10R10 images are sampled; a2b10=write swaps them in the shader
+output (and the color write mask) for A2B10G10R10 render targets.
+---
+ .../backend/spirv/emit_spirv_context_get_set.cpp |  4 ++++
+ src/shader_recompiler/runtime_info.h             |  3 +++
+ .../renderer_vulkan/vk_graphics_pipeline.cpp     | 14 ++++++++++++++
+ .../renderer_vulkan/vk_pipeline_cache.cpp        | 16 ++++++++++++++++
+ .../renderer_vulkan/vk_texture_cache.cpp         | 10 +++++++++-
+ 5 files changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp b/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
+index 28f9869..72483b4 100644
+--- a/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
++++ b/src/shader_recompiler/backend/spirv/emit_spirv_context_get_set.cpp
+@@ -487,6 +487,10 @@ void EmitSetPatch(EmitContext& ctx, IR::Patch patch, Id value) {
+ }
+ 
+ void EmitSetFragColor(EmitContext& ctx, u32 index, u32 component, Id value) {
++    if (((ctx.runtime_info.color_output_swap_rb >> index) & 1u) != 0 && (component & 1u) == 0) {
++        // Components 0 (R) and 2 (B) trade places; 1 (G) and 3 (A) stay.
++        component ^= 2u;
++    }
+     const Id component_id{ctx.Const(component)};
+     const AttributeType type{ctx.runtime_info.color_output_types[index]};
+     if (type == AttributeType::Float) {
+diff --git a/src/shader_recompiler/runtime_info.h b/src/shader_recompiler/runtime_info.h
+index e6e1284..ac5a1e4 100644
+--- a/src/shader_recompiler/runtime_info.h
++++ b/src/shader_recompiler/runtime_info.h
+@@ -112,6 +112,9 @@ struct RuntimeInfo {
+     /// Output types for each color attachment
+     std::array<AttributeType, 8> color_output_types{};
+ 
++    /// PS4 color experiment: bit i set = swap red and blue of color output i when it is stored
++    u8 color_output_swap_rb{};
++
+     /// Dual source blending
+     bool dual_source_blend{};
+ };
+diff --git a/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp b/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+index 8b5b0bc..9c1c8c2 100644
+--- a/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
++++ b/src/video_core/renderer_vulkan/vk_graphics_pipeline.cpp
+@@ -37,6 +37,9 @@
+ #endif
+ 
+ namespace Vulkan {
++#ifdef __ORBIS__
++extern int ps4_a2b10_force; // vk_texture_cache.cpp
++#endif
+ namespace {
+ using boost::container::small_vector;
+ using boost::container::static_vector;
+@@ -929,6 +932,17 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
+         for (size_t i = 0; i < mask_table.size(); ++i) {
+             write_mask |= mask[i] ? mask_table[i] : 0;
+         }
++#ifdef __ORBIS__
++        if (ps4_a2b10_force == 2 &&
++            static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[index]) ==
++                Tegra::RenderTargetFormat::A2B10G10R10_UNORM) {
++            // Matches the red/blue swap the shader applies to its output (a2b10=write).
++            const VkColorComponentFlags r = write_mask & VK_COLOR_COMPONENT_R_BIT;
++            const VkColorComponentFlags b = write_mask & VK_COLOR_COMPONENT_B_BIT;
++            write_mask = (write_mask & ~(VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_B_BIT)) |
++                         (r ? VK_COLOR_COMPONENT_B_BIT : 0) | (b ? VK_COLOR_COMPONENT_R_BIT : 0);
++        }
++#endif
+         cb_attachments.push_back({
+             .blendEnable = blend.enable != 0,
+             .srcColorBlendFactor = MaxwellToVK::BlendFactor(blend.SourceRGBFactor()),
+diff --git a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+index 5fc9814..226b09e 100644
+--- a/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
+@@ -54,6 +54,10 @@
+ 
+ namespace Vulkan {
+ 
++#ifdef __ORBIS__
++extern int ps4_a2b10_force; // vk_texture_cache.cpp
++#endif
++
+ namespace {
+ using Shader::Backend::SPIRV::EmitSPIRV;
+ using Shader::Maxwell::ConvertLegacyToGeneric;
+@@ -268,6 +272,18 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
+                 }
+             }
+         }
++#ifdef __ORBIS__
++        if (ps4_a2b10_force == 2) {
++            // settings.txt a2b10=write: red and blue swapped on what the game's shaders store
++            // into A2B10G10R10 targets (the read side stays as it is).
++            for (size_t i = 0; i < 8; ++i) {
++                const auto format = static_cast<Tegra::RenderTargetFormat>(key.state.color_formats[i]);
++                if (format == Tegra::RenderTargetFormat::A2B10G10R10_UNORM) {
++                    info.color_output_swap_rb |= static_cast<u8>(1u << i);
++                }
++            }
++        }
++#endif
+         break;
+     }
+     default:
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 34f1260..133e73a 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -76,6 +76,14 @@ int ps4_a2b10_mode = 0;
+ bool ps4_a2b10_rt_use_a2r10 = false;
+ bool ps4_a2b10_sample_use_a2r10 = false;
+ bool ps4_a2b10_sample_swap = false;
++// Color experiment (settings.txt a2b10=sample|write), independent of the self-test, which only
++// exercises blits and so never sees what a game's own shaders do:
++//   1 = red/blue swapped when A2B10G10R10 images are SAMPLED (read side),
++//   2 = red/blue swapped in what shaders STORE into A2B10G10R10 targets (write side, see
++//       vk_pipeline_cache.cpp / vk_graphics_pipeline.cpp / EmitSetFragColor).
++// Exactly one of them should turn MK8D's red/blue-swapped images right if the swap happens on
++// that side; both at once cancel out.
++int ps4_a2b10_force = 0;
+ // Component mappings, measured at startup (Ps4SwizzleSelfTest): for each permutation of R,G,B,A
+ // that a guest view asks for on an 8-bit RGBA image, the mapping to hand the driver instead so
+ // that it samples what was asked. Empty when the driver applies every permutation correctly.
+@@ -3499,7 +3507,7 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+             }
+         } else if (ps4_a2b10_sample_use_a2r10) {
+             format_info.format = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+-        } else if (ps4_a2b10_sample_swap) {
++        } else if (ps4_a2b10_sample_swap || ps4_a2b10_force == 1) {
+             std::ranges::transform(swizzle, swizzle.begin(), SwapBlueRed);
+         }
+     }
+-- 
+2.43.0
+

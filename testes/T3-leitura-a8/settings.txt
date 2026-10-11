@@ -1,0 +1,2 @@
+# Teste 3: troca vermelho/azul ao LER texturas RGBA de 8 bits
+swapview=a8
