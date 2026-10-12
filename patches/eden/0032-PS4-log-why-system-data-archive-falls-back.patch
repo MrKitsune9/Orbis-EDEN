@@ -1,0 +1,32 @@
+From a7b5108dea3d38dbbd4207607ba880b98c184b88 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Mon, 12 Oct 2026 13:42:11 -0300
+Subject: [PATCH] PS4: log why a system data archive (e.g. MiiModel) fell back
+ to the placeholder
+
+---
+ src/core/hle/service/filesystem/fsp/fsp_srv.cpp | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+index fdbd50e..2eb0944 100644
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -487,6 +487,14 @@ Result FSP_SRV::OpenDataStorageByDataId(OutInterface<IStorage> out_interface,
+     auto data = romfs_controller->OpenRomFS(title_id, storage_id, FileSys::ContentRecordType::Data);
+ 
+     if (!data) {
++#ifdef __ORBIS__
++        // PS4 port diagnostic: say WHY the real system data archive was not used.
++        LOG_WARNING(Service_FS,
++                    "PS4: data title {:016X} not opened from the firmware (storage {:02X}): "
++                    "registered entry present={}; falling back to the built-in placeholder if any",
++                    title_id, storage_id,
++                    content_provider.HasEntry(title_id, FileSys::ContentRecordType::Data));
++#endif
+         const auto archive = FileSys::SystemArchive::SynthesizeSystemArchive(title_id);
+ 
+         if (archive != nullptr) {
+-- 
+2.43.0
+

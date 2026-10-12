@@ -1,0 +1,25 @@
+From 3d6a18775153c46b945af6869f76a53f467e0028 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Mon, 12 Oct 2026 14:09:57 -0300
+Subject: [PATCH] PS4: include registered_cache.h for the data-archive
+ diagnostic (fixes build of 0032)
+
+---
+ src/core/hle/service/filesystem/fsp/fsp_srv.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+index 2eb0944..f8ee292 100644
+--- a/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
++++ b/src/core/hle/service/filesystem/fsp/fsp_srv.cpp
+@@ -24,6 +24,7 @@
+ #include "core/file_sys/fs_filesystem.h"
+ #include "core/file_sys/nca_metadata.h"
+ #include "core/file_sys/patch_manager.h"
++#include "core/file_sys/registered_cache.h"
+ #include "core/file_sys/romfs.h"
+ #include "core/file_sys/romfs_factory.h"
+ #include "core/file_sys/savedata_factory.h"
+-- 
+2.43.0
+

@@ -1,0 +1,73 @@
+From 9b04749d4c8e7f5e4f5b7e28501512d1e9594452 Mon Sep 17 00:00:00 2001
+From: x <x@x>
+Date: Sun, 11 Oct 2026 19:06:55 -0300
+Subject: [PATCH] PS4: hand out the built-in Miis when the Mii database is
+ empty (MK8D 'no Mii' hang)
+
+---
+ src/core/hle/service/mii/mii_manager.cpp | 28 ++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/src/core/hle/service/mii/mii_manager.cpp b/src/core/hle/service/mii/mii_manager.cpp
+index ed37830..be35dd4 100644
+--- a/src/core/hle/service/mii/mii_manager.cpp
++++ b/src/core/hle/service/mii/mii_manager.cpp
+@@ -328,6 +328,13 @@ Result MiiManager::Get(const DatabaseSessionMetadata& metadata,
+     }
+ 
+     // Include default Mii at the end of the list
++#ifdef __ORBIS__
++    // PS4 port: with an empty database, still hand out the built-in Miis so games that only
++    // ask for database Miis (Mario Kart 8 Deluxe) do not get stuck with 'no Mii found'.
++    if (mii_count == 0) {
++        source_flag = source_flag | SourceFlag::Default;
++    }
++#endif
+     return BuildDefault(out_elements, out_count, source_flag);
+ }
+ 
+@@ -352,6 +359,13 @@ Result MiiManager::Get(const DatabaseSessionMetadata& metadata, std::span<CharIn
+     }
+ 
+     // Include default Mii at the end of the list
++#ifdef __ORBIS__
++    // PS4 port: with an empty database, still hand out the built-in Miis so games that only
++    // ask for database Miis (Mario Kart 8 Deluxe) do not get stuck with 'no Mii found'.
++    if (mii_count == 0) {
++        source_flag = source_flag | SourceFlag::Default;
++    }
++#endif
+     return BuildDefault(out_char_info, out_count, source_flag);
+ }
+ 
+@@ -378,6 +392,13 @@ Result MiiManager::Get(const DatabaseSessionMetadata& metadata,
+     }
+ 
+     // Include default Mii at the end of the list
++#ifdef __ORBIS__
++    // PS4 port: with an empty database, still hand out the built-in Miis so games that only
++    // ask for database Miis (Mario Kart 8 Deluxe) do not get stuck with 'no Mii found'.
++    if (mii_count == 0) {
++        source_flag = source_flag | SourceFlag::Default;
++    }
++#endif
+     return BuildDefault(out_elements, out_count, source_flag);
+ }
+ 
+@@ -402,6 +423,13 @@ Result MiiManager::Get(const DatabaseSessionMetadata& metadata, std::span<StoreD
+     }
+ 
+     // Include default Mii at the end of the list
++#ifdef __ORBIS__
++    // PS4 port: with an empty database, still hand out the built-in Miis so games that only
++    // ask for database Miis (Mario Kart 8 Deluxe) do not get stuck with 'no Mii found'.
++    if (mii_count == 0) {
++        source_flag = source_flag | SourceFlag::Default;
++    }
++#endif
+     return BuildDefault(out_store_data, out_count, source_flag);
+ }
+ Result MiiManager::BuildDefault(std::span<CharInfoElement> out_elements, u32& out_count,
+-- 
+2.43.0
+
