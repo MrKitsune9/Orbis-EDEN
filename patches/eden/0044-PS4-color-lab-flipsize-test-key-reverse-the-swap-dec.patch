@@ -1,0 +1,51 @@
+From d182b9b393cfc7ab480705346408cc9095d652d8 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Fri, 16 Oct 2026 16:25:24 -0300
+Subject: [PATCH] PS4: color lab: flipsize= test key (reverse the swap decision
+ for images of a given size)
+
+Lets whole groups of images be flipped from settings.txt without a new build.
+---
+ .../renderer_vulkan/vk_texture_cache.cpp      | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 05129e1..3533ea7 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -89,6 +89,19 @@ int ps4_a2b10_force = 0;
+ u32 ps4_swapwrite = 0;
+ u32 ps4_swapview = 0;
+ int ps4_swaphash = -1;
++// settings.txt flipsize=WxH[:vk],...: views of images of that size (and, when given, that Vulkan
++// format number) get their swap decision reversed. Lets one test whole groups of images.
++struct Ps4FlipRule {
++    u32 w;
++    u32 h;
++    int vk; // -1 = any format
++};
++std::vector<Ps4FlipRule> ps4_flip_rules;
++void Ps4AddFlipRule(u32 w, u32 h, int vk) {
++    if (ps4_flip_rules.size() < 32) {
++        ps4_flip_rules.push_back({w, h, vk});
++    }
++}
+ // Component mappings, measured at startup (Ps4SwizzleSelfTest): for each permutation of R,G,B,A
+ // that a guest view asks for on an 8-bit RGBA image, the mapping to hand the driver instead so
+ // that it samples what was asked. Empty when the driver applies every permutation correctly.
+@@ -3600,6 +3613,12 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+                 swap = !swap; // diagnosis only (swaphash=)
+             }
+         }
++        for (const Ps4FlipRule& rule : ps4_flip_rules) {
++            if (image.info.size.width == rule.w && image.info.size.height == rule.h &&
++                (rule.vk < 0 || rule.vk == int(vkf))) {
++                swap = !swap; // test only (flipsize=)
++            }
++        }
+         // Patch 0036: a view that never reads the blue channel (for example BC1 sampled as
+         // R,G,0,0: two-channel data, not a color) must keep its mapping. Exchanging red and blue
+         // there would feed the empty blue channel into red and turn the texture black.
+-- 
+2.43.0
+

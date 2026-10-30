@@ -1,0 +1,94 @@
+From 1a46858610adc5e218427877eb8706d4c7fdbd74 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Thu, 15 Oct 2026 15:24:13 -0300
+Subject: [PATCH] PS4: color lab: swaphash diagnosis key and view hash in the
+ PS4 view log
+
+---
+ .../renderer_vulkan/ps4_color_lab.h           | 15 +++++++++++++
+ .../renderer_vulkan/vk_texture_cache.cpp      | 22 +++++++++++++++----
+ 2 files changed, 33 insertions(+), 4 deletions(-)
+
+diff --git a/src/video_core/renderer_vulkan/ps4_color_lab.h b/src/video_core/renderer_vulkan/ps4_color_lab.h
+index b999a22..c928de4 100644
+--- a/src/video_core/renderer_vulkan/ps4_color_lab.h
++++ b/src/video_core/renderer_vulkan/ps4_color_lab.h
+@@ -43,9 +43,24 @@ namespace Vulkan {
+ extern int ps4_a2b10_force; // vk_texture_cache.cpp
+ extern u32 ps4_swapwrite;   // vk_texture_cache.cpp
+ extern u32 ps4_swapview;    // vk_texture_cache.cpp
++extern int ps4_swaphash;    // vk_texture_cache.cpp (-1 = off)
+ 
+ namespace Ps4ColorLab {
+ 
++/// Stable 10 bit identity of a sampled view: the image's GPU address, its guest format and
++/// size. It is printed in the "PS4 view" log line, and settings.txt swaphash=K (0..9) flips the
++/// red/blue decision of every color view whose hash has bit K set. Ten runs, one per bit, read
++/// off the hash of the image that fixes (or breaks) a given spot on screen.
++[[nodiscard]] inline u32 ViewHash(u64 gpu_addr, u32 guest_format, u32 width, u32 height) {
++    u64 h = gpu_addr * 0x9E3779B97F4A7C15ull;
++    h ^= (u64(guest_format) << 40) ^ (u64(width) << 20) ^ u64(height);
++    h *= 0xFF51AFD7ED558CCDull;
++    h ^= h >> 33;
++    h *= 0xC4CEB9FE1A85EC53ull;
++    h ^= h >> 29;
++    return u32(h) & 0x3FFu;
++}
++
+ inline constexpr u32 A8 = 1u << 0;
+ inline constexpr u32 BC = 1u << 1;
+ inline constexpr u32 A2 = 1u << 2;
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index d123c95..79d0e2b 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -88,6 +88,7 @@ int ps4_a2b10_force = 0;
+ // Color lab (patch 0030, settings.txt swapwrite= / swapview=): bit masks of Ps4ColorLab tokens.
+ u32 ps4_swapwrite = 0;
+ u32 ps4_swapview = 0;
++int ps4_swaphash = -1;
+ // Component mappings, measured at startup (Ps4SwizzleSelfTest): for each permutation of R,G,B,A
+ // that a guest view asks for on an 8-bit RGBA image, the mapping to hand the driver instead so
+ // that it samples what was asked. Empty when the driver applies every permutation correctly.
+@@ -3589,6 +3590,14 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         if (!swap && (mask & Ps4ColorLab::GPU) != 0) {
+             swap = True(image.flags & ImageFlagBits::GpuModified);
+         }
++        if (ps4_swaphash >= 0 && ps4_swaphash < 10) {
++            const u32 view_hash = Ps4ColorLab::ViewHash(image.gpu_addr, u32(image.info.format),
++                                                        image.info.size.width,
++                                                        image.info.size.height);
++            if (((view_hash >> ps4_swaphash) & 1u) != 0) {
++                swap = !swap; // diagnosis only (swaphash=)
++            }
++        }
+         // Patch 0036: a view that never reads the blue channel (for example BC1 sampled as
+         // R,G,0,0: two-channel data, not a color) must keep its mapping. Exchanging red and blue
+         // there would feed the empty blue channel into red and turn the texture black.
+@@ -3626,14 +3635,19 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+                        u64(info.IsRenderTarget()) << 56 | u64(image.info.format) << 57;
+         // The size too (test 17): the video's planes share format and swizzle with UI textures.
+         const u64 size_key = u64(image.info.size.width) << 16 | u64(image.info.size.height);
++        const u32 log_hash = Ps4ColorLab::ViewHash(image.gpu_addr, u32(image.info.format),
++                                                   image.info.size.width, image.info.size.height);
+         std::scoped_lock lock{seen_mutex};
+-        if (seen.size() < 600 && std::find(seen.begin(), seen.end(), id ^ (size_key * 0x9E3779B97F4A7C15ull)) == seen.end()) {
+-            seen.push_back(id ^ (size_key * 0x9E3779B97F4A7C15ull));
++        const u64 seen_key = id ^ (size_key * 0x9E3779B97F4A7C15ull) ^
++                             (u64(log_hash) * 0xC2B2AE3D27D4EB4Full);
++        if (seen.size() < 4000 && std::find(seen.begin(), seen.end(), seen_key) == seen.end()) {
++            seen.push_back(seen_key);
+             LOG_INFO(Render_Vulkan,
+-                     "PS4 view: guest {} on image {} -> vk {} swizzle {},{},{},{} rt={} {}x{}",
++                     "PS4 view: guest {} on image {} -> vk {} swizzle {},{},{},{} rt={} {}x{} hash={:03x} addr={:x}",
+                      u32(format), u32(image.info.format), u32(format_info.format),
+                      u32(swizzle[0]), u32(swizzle[1]), u32(swizzle[2]), u32(swizzle[3]),
+-                     info.IsRenderTarget(), image.info.size.width, image.info.size.height);
++                     info.IsRenderTarget(), image.info.size.width, image.info.size.height, log_hash,
++                     u64(image.gpu_addr));
+         }
+     }
+ #endif
+-- 
+2.43.0
+

@@ -116,12 +116,16 @@ std::string DisplayName(const std::string& file) {
 void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
     constexpr int Left = 120;
     constexpr int RowHeight = 56;
-    constexpr int ListTop = 220;
-    constexpr int Rows = 13;
+    constexpr int ListTop = 250;
+    constexpr int Rows = 12;
     constexpr size_t MaxChars = (Width - 2 * Left - 40) / MenuFont::Width;
+    constexpr uint32_t Accent = 0xFF6FD3FF;
     c.Fill(0, 0, Width, Height, Background);
-    c.Print(Left, 90, "Eden PS4 - elegi un juego", Text, Background);
-    c.Fill(Left, 150, Width - 2 * Left, 3, Dim);
+    // Header: name, then what it is.
+    c.Fill(Left, 70, 10, 100, Accent);
+    c.Print(Left + 36, 60, "ORBIS EDEN", 0xFFFFFFFF, Background);
+    c.Print(Left + 36, 112, "Switch emulator for PS4  -  choose a game", Dim, Background);
+    c.Fill(Left, 190, Width - 2 * Left, 3, Dim);
 
     const int count = int(names.size());
     const int first = std::clamp(selected - Rows / 2, 0, std::max(count - Rows, 0));
@@ -131,8 +135,9 @@ void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
         const bool on = index == selected;
         if (on) {
             c.Fill(Left, y - 8, Width - 2 * Left, RowHeight - 4, Highlight);
+            c.Fill(Left, y - 8, 10, RowHeight - 4, Accent);
         }
-        c.Print(Left + 20, y, DisplayName(names[index]), on ? 0xFFFFFFFF : Text,
+        c.Print(Left + 30, y, DisplayName(names[index]), on ? 0xFFFFFFFF : Text,
                 on ? Highlight : Background, MaxChars);
     }
     if (first > 0) {
@@ -141,11 +146,17 @@ void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
     if (first + Rows < count) {
         c.Print(Width - Left - MenuFont::Width, ListTop + Rows * RowHeight, "v", Dim, Background);
     }
-    c.Fill(Left, Height - 130, Width - 2 * Left, 3, Dim);
-    c.Print(Left, Height - 100, "Arriba/Abajo: elegir    X: jugar", Dim, Background);
+    // Footer: controls, position, credits.
+    c.Fill(Left, Height - 170, Width - 2 * Left, 3, Dim);
+    c.Print(Left, Height - 150, "Up/Down: choose    X: play", Text, Background);
     char position[32];
     std::snprintf(position, sizeof(position), "%d / %d", selected + 1, count);
-    c.Print(Width - Left - int(std::strlen(position)) * MenuFont::Width, Height - 100, position,
+    c.Print(Width - Left - int(std::strlen(position)) * MenuFont::Width, Height - 150, position,
+            Dim, Background);
+    c.Print(Left, Height - 105,
+            "Mr.Kitsune9, @blorbus0866, @titotostito_ (icon), @loony_user, Claude",
+            Dim, Background);
+    c.Print(Left, Height - 65, "Based on NX on Orbis by Alejo  -  built on Eden (not affiliated)",
             Dim, Background);
 }
 

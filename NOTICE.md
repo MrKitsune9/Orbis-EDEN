@@ -1,6 +1,6 @@
 # Notices
 
-**NX on Orbis** is not affiliated with, endorsed by, or supported by the Eden project, yuzu, Nintendo
+**Orbis Eden** (formerly NX on Orbis) is not affiliated with, endorsed by, or supported by the Eden project, yuzu, Nintendo
 or Sony. It contains no keys, firmware, games or Sony system software beyond the OpenOrbis sample
 modules noted below.
 

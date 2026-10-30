@@ -1,0 +1,30 @@
+From 0561a79486cc66c5d3fe1abffeef2888de89f221 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Tue, 13 Oct 2026 17:56:06 -0300
+Subject: [PATCH] PS4: color lab: do not swap red/blue in views that never read
+ the blue channel
+
+---
+ src/video_core/renderer_vulkan/vk_texture_cache.cpp | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index eaedb5c..48fe4a9 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3560,6 +3560,12 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         if (!swap && (mask & Ps4ColorLab::GPU) != 0) {
+             swap = True(image.flags & ImageFlagBits::GpuModified);
+         }
++        // Patch 0036: a view that never reads the blue channel (for example BC1 sampled as
++        // R,G,0,0: two-channel data, not a color) must keep its mapping. Exchanging red and blue
++        // there would feed the empty blue channel into red and turn the texture black.
++        if (swap && std::ranges::none_of(swizzle, [](SwizzleSource s) { return s == SwizzleSource::B; })) {
++            swap = false;
++        }
+         if (swap) {
+             std::ranges::transform(swizzle, swizzle.begin(), SwapBlueRed);
+         }
+-- 
+2.43.0
+

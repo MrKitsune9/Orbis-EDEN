@@ -1,0 +1,54 @@
+From b9b4a84d4f169fe3b5d63635a6598c8abf3975b6 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Sat, 24 Oct 2026 14:59:11 -0300
+Subject: [PATCH] PS4: color lab: hashsize=/hashnot= limit swaphash to (or
+ exclude) given image sizes
+
+Group testing: find which image sizes a screen's colors depend on.
+---
+ .../renderer_vulkan/vk_texture_cache.cpp      | 22 ++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 3533ea7..7db0267 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -97,6 +97,16 @@ struct Ps4FlipRule {
+     int vk; // -1 = any format
+ };
+ std::vector<Ps4FlipRule> ps4_flip_rules;
++// settings.txt hashsize=WxH[:vk],...: when set, swaphash= only touches images matching one of
++// these (or, with hashnot=, everything except them). Narrows down which images a screen needs.
++std::vector<Ps4FlipRule> ps4_hash_rules;
++bool ps4_hash_exclude = false;
++void Ps4AddHashRule(u32 w, u32 h, int vk, bool exclude) {
++    ps4_hash_exclude = exclude;
++    if (ps4_hash_rules.size() < 32) {
++        ps4_hash_rules.push_back({w, h, vk});
++    }
++}
+ void Ps4AddFlipRule(u32 w, u32 h, int vk) {
+     if (ps4_flip_rules.size() < 32) {
+         ps4_flip_rules.push_back({w, h, vk});
+@@ -3605,7 +3615,17 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         }
+         // Not the screen-sized images: they alternate frame to frame (double buffering), so
+         // flipping only one of the pair would make the whole picture flicker.
+-        if (ps4_swaphash >= 0 && ps4_swaphash < 10 && image.info.size.width < 1000) {
++        bool hash_allowed = true;
++        if (!ps4_hash_rules.empty()) {
++            bool matched = false;
++            for (const Ps4FlipRule& rule : ps4_hash_rules) {
++                matched |= image.info.size.width == rule.w && image.info.size.height == rule.h &&
++                           (rule.vk < 0 || rule.vk == int(vkf));
++            }
++            hash_allowed = matched != ps4_hash_exclude;
++        }
++        if (hash_allowed && ps4_swaphash >= 0 && ps4_swaphash < 10 &&
++            image.info.size.width < 1000) {
+             const u32 view_hash = Ps4ColorLab::ViewHash(image.gpu_addr, u32(image.info.format),
+                                                         image.info.size.width,
+                                                         image.info.size.height);
+-- 
+2.43.0
+

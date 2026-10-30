@@ -1,0 +1,28 @@
+From 9312f67c21d663081c82b15780a5cf64a105d302 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Thu, 15 Oct 2026 15:42:05 -0300
+Subject: [PATCH] PS4: color lab: swaphash leaves screen-sized images alone
+ (they alternate every frame)
+
+---
+ src/video_core/renderer_vulkan/vk_texture_cache.cpp | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 79d0e2b..05129e1 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3590,7 +3590,9 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         if (!swap && (mask & Ps4ColorLab::GPU) != 0) {
+             swap = True(image.flags & ImageFlagBits::GpuModified);
+         }
+-        if (ps4_swaphash >= 0 && ps4_swaphash < 10) {
++        // Not the screen-sized images: they alternate frame to frame (double buffering), so
++        // flipping only one of the pair would make the whole picture flicker.
++        if (ps4_swaphash >= 0 && ps4_swaphash < 10 && image.info.size.width < 1000) {
+             const u32 view_hash = Ps4ColorLab::ViewHash(image.gpu_addr, u32(image.info.format),
+                                                         image.info.size.width,
+                                                         image.info.size.height);
+-- 
+2.43.0
+

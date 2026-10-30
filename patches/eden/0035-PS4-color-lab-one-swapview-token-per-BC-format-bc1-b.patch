@@ -1,0 +1,70 @@
+From 18eab99b9ae9e0890e63dfeb07a20903854c5569 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Tue, 13 Oct 2026 16:32:36 -0300
+Subject: [PATCH] PS4: color lab: one swapview token per BC format (bc1 bc3 bc6
+ bc7 bcsrgb)
+
+---
+ src/video_core/renderer_vulkan/ps4_color_lab.h  | 10 ++++++++++
+ .../renderer_vulkan/vk_texture_cache.cpp        | 17 +++++++++++++++++
+ 2 files changed, 27 insertions(+)
+
+diff --git a/src/video_core/renderer_vulkan/ps4_color_lab.h b/src/video_core/renderer_vulkan/ps4_color_lab.h
+index a723d27..bd4b3d4 100644
+--- a/src/video_core/renderer_vulkan/ps4_color_lab.h
++++ b/src/video_core/renderer_vulkan/ps4_color_lab.h
+@@ -18,6 +18,11 @@
+ //                        (render-target and depth views are never touched). Tokens:
+ //                          a8     A8B8G8R8 / B8G8R8A8 views
+ //                          bc     BC1, BC2, BC3, BC6H and BC7 views (not BC4/BC5: not color)
++//                          bc1    BC1 views only (RGB and RGBA, UNORM and sRGB)
++//                          bc3    BC2 and BC3 views only
++//                          bc6    BC6H views only
++//                          bc7    BC7 views only
++//                          bcsrgb every BC1/2/3/7 view that is sRGB
+ //                          a2     A2B10G10R10 views
+ //                          r11    B10G11R11 views
+ //                          f16    R16G16B16A16 float views
+@@ -45,6 +50,11 @@ inline constexpr u32 F16 = 1u << 4;
+ inline constexpr u32 DEPTH = 1u << 5;
+ inline constexpr u32 GPU = 1u << 6;
+ inline constexpr u32 ALL = 1u << 7;
++inline constexpr u32 BC1 = 1u << 8;
++inline constexpr u32 BC3 = 1u << 9;
++inline constexpr u32 BC6 = 1u << 10;
++inline constexpr u32 BC7 = 1u << 11;
++inline constexpr u32 BCSRGB = 1u << 12;
+ 
+ /// Should the color attachment with this raw Maxwell RenderTargetFormat get red and blue
+ /// exchanged on write? `depth_bound` is whether the draw has a depth buffer.
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index a0060d7..eaedb5c 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3531,6 +3531,23 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+             swap = (vkf >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && vkf <= VK_FORMAT_BC3_SRGB_BLOCK) ||
+                    (vkf >= VK_FORMAT_BC6H_UFLOAT_BLOCK && vkf <= VK_FORMAT_BC7_SRGB_BLOCK);
+         }
++        if (!swap && (mask & Ps4ColorLab::BC1) != 0) {
++            swap = vkf >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && vkf <= VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
++        }
++        if (!swap && (mask & Ps4ColorLab::BC3) != 0) {
++            swap = vkf >= VK_FORMAT_BC2_UNORM_BLOCK && vkf <= VK_FORMAT_BC3_SRGB_BLOCK;
++        }
++        if (!swap && (mask & Ps4ColorLab::BC6) != 0) {
++            swap = vkf == VK_FORMAT_BC6H_UFLOAT_BLOCK || vkf == VK_FORMAT_BC6H_SFLOAT_BLOCK;
++        }
++        if (!swap && (mask & Ps4ColorLab::BC7) != 0) {
++            swap = vkf == VK_FORMAT_BC7_UNORM_BLOCK || vkf == VK_FORMAT_BC7_SRGB_BLOCK;
++        }
++        if (!swap && (mask & Ps4ColorLab::BCSRGB) != 0) {
++            swap = vkf == VK_FORMAT_BC1_RGB_SRGB_BLOCK || vkf == VK_FORMAT_BC1_RGBA_SRGB_BLOCK ||
++                   vkf == VK_FORMAT_BC2_SRGB_BLOCK || vkf == VK_FORMAT_BC3_SRGB_BLOCK ||
++                   vkf == VK_FORMAT_BC7_SRGB_BLOCK;
++        }
+         if (!swap && (mask & Ps4ColorLab::A2) != 0) {
+             swap = vkf == VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+         }
+-- 
+2.43.0
+

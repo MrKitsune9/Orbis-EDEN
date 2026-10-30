@@ -1,0 +1,41 @@
+From 73419f33035db8a7d230dc5973710191aedb6e66 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Thu, 15 Oct 2026 10:22:46 -0300
+Subject: [PATCH] PS4: color lab: a8uf swapview token (UNORM 8 bit views of
+ images the GPU never wrote)
+
+---
+ src/video_core/renderer_vulkan/ps4_color_lab.h      | 1 +
+ src/video_core/renderer_vulkan/vk_texture_cache.cpp | 4 ++++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/src/video_core/renderer_vulkan/ps4_color_lab.h b/src/video_core/renderer_vulkan/ps4_color_lab.h
+index 519eea7..b999a22 100644
+--- a/src/video_core/renderer_vulkan/ps4_color_lab.h
++++ b/src/video_core/renderer_vulkan/ps4_color_lab.h
+@@ -65,6 +65,7 @@ inline constexpr u32 A8UL = 1u << 15;
+ inline constexpr u32 A8UW = 1u << 16;
+ inline constexpr u32 A8U720 = 1u << 17; // UNORM A8 views 1200 or more wide
+ inline constexpr u32 A8U360 = 1u << 18; // UNORM A8 views 600..1199 wide
++inline constexpr u32 A8UF = 1u << 20;   // UNORM A8 views of images never written by the GPU (file textures)
+ inline constexpr u32 A2L = 1u << 19;    // A2B10G10R10 views 1200 or more wide (scene)
+ 
+ /// Should the color attachment with this raw Maxwell RenderTargetFormat get red and blue
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index ce27044..d123c95 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3546,6 +3546,10 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         if (!swap && (mask & Ps4ColorLab::A8U360) != 0) {
+             swap = a8_unorm && view_w >= 600 && view_w < 1200;
+         }
++        if (!swap && (mask & Ps4ColorLab::A8UF) != 0) {
++            swap = a8_unorm &&
++                   False(image.flags & VideoCommon::ImageFlagBits::GpuModified);
++        }
+         if (!swap && (mask & Ps4ColorLab::A8UW) != 0) {
+             swap = a8_unorm && view_w >= 200 && view_w >= 4 * view_h;
+         }
+-- 
+2.43.0
+

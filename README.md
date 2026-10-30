@@ -1,4 +1,6 @@
-# NX on Orbis
+# Orbis Eden
+
+> Formerly **NX on Orbis** (by Alejo). Continued by Mr.Kitsune9, @blorbus0866, @titotostito_, @loony_user and Claude.
 
 An experimental port of the **Eden** Nintendo Switch emulator (a yuzu fork) to a jailbroken
 **PS4 Pro** (OpenOrbis toolchain, Mesa RADV Vulkan driver for the PS4 GPU).
@@ -72,7 +74,8 @@ commit it pins), the orbis-ports project (orbis-compat and the PS4 Mesa RADV dri
 ### Continuation (after v0.1.0)
 
 Picked up from the abandoned project by **Mr.Kitsune9**. Beta testers: **@blorbus0866** and
-**@titotostito_**. Target console: PS4 Pro (firmware 13.52). The color experiment
+**@titotostito_** (who also made the Orbis Eden icon). **@loony_user** helped with testing and
+with creating the community server. Target console: PS4 Pro (firmware 13.52). The color experiment
 (patch 0028, `a2b10=sample|write` in `settings.txt`), the stability patch (0029) and the Linux
 build scripts in `ci/` were written with **Claude** (Anthropic), directed by Mr.Kitsune9. As
 with v0.1.0, these changes are experimental and are not affiliated with the Eden project.

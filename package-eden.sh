@@ -13,7 +13,7 @@ OO="C:/nxorbis/tools/OpenOrbis/OpenOrbis/PS4Toolchain"
 export DOTNET_ROLL_FORWARD=LatestMajor
 export OO_PS4_TOOLCHAIN="$(cygpath -m "$SDK")"
 
-TITLE="NX on Orbis"
+TITLE="Orbis Eden"
 TITLE_ID="EDPS00001"
 CID="IV0000-${TITLE_ID}_00-EDENPS4000000000"
 ELF="${ELF:-$ROOT/build-eden/bin/eden-ps4}"

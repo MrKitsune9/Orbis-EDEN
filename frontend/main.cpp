@@ -25,6 +25,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -70,6 +71,9 @@ extern int ps4_a2b10_mode;   // vk_texture_cache.cpp
 extern int ps4_a2b10_force;  // vk_texture_cache.cpp (color experiment, patch 0028)
 extern u32 ps4_swapwrite;    // vk_texture_cache.cpp (color lab, patch 0030)
 extern u32 ps4_swapview;     // vk_texture_cache.cpp (color lab, patch 0030)
+extern int ps4_swaphash;     // vk_texture_cache.cpp (diagnosis, patch 0042)
+void Ps4AddFlipRule(u32 w, u32 h, int vk); // vk_texture_cache.cpp (patch 0044)
+void Ps4AddHashRule(u32 w, u32 h, int vk, bool exclude); // vk_texture_cache.cpp (patch 0045)
 }
 
 namespace {
@@ -274,6 +278,10 @@ bool ParseSwapTokens(const std::string& value, bool write, u32& out) {
             out |= 1u << 0;
         } else if (token == "bc" && !write) {
             out |= 1u << 1;
+        } else if (token == "a8uf" && !write) {
+            out |= 1u << 20;
+        } else if (token == "a2l" && !write) {
+            out |= 1u << 19;
         } else if (token == "a2") {
             out |= 1u << 2;
         } else if (token == "r11") {
@@ -286,6 +294,28 @@ bool ParseSwapTokens(const std::string& value, bool write, u32& out) {
             out |= 1u << 6;
         } else if (token == "all") {
             out |= 1u << 7;
+        } else if (token == "bc1" && !write) {
+            out |= 1u << 8;
+        } else if (token == "bc3" && !write) {
+            out |= 1u << 9;
+        } else if (token == "bc6" && !write) {
+            out |= 1u << 10;
+        } else if (token == "bc7" && !write) {
+            out |= 1u << 11;
+        } else if (token == "bcsrgb" && !write) {
+            out |= 1u << 12;
+        } else if (token == "a8s" && !write) {
+            out |= 1u << 13;
+        } else if (token == "a8u" && !write) {
+            out |= 1u << 14;
+        } else if (token == "a8ul" && !write) {
+            out |= 1u << 15;
+        } else if (token == "a8uw" && !write) {
+            out |= 1u << 16;
+        } else if (token == "a8u720" && !write) {
+            out |= 1u << 17;
+        } else if (token == "a8u360" && !write) {
+            out |= 1u << 18;
         } else {
             return false;
         }
@@ -303,7 +333,7 @@ bool ParseSwapTokens(const std::string& value, bool write, u32& out) {
 ///   swapwrite=TOKENS           color lab (patch 0030): red/blue swapped in what shaders STORE.
 ///                               TOKENS, comma separated: a8 a2 r11 f16 depth all (or off)
 ///   swapview=TOKENS            color lab (patch 0030): red/blue swapped when SAMPLING.
-///                               TOKENS, comma separated: a8 bc a2 r11 f16 gpu all (or off)
+///                               TOKENS, comma separated: a8 a8s a8u a8ul a8uw a8u720 a8u360 a2l a8uf bc bc1 bc3 bc6 bc7 bcsrgb a2 r11 f16 gpu all (or off)
 ///   rg=auto|on|off              R8G8 red/green workaround (default auto: startup self-test)
 ///   swizzle=test|off            run the component-mapping self-test at startup (default off)
 ///   dyna_state=0..3             Vulkan extended dynamic state level (default 2)
@@ -352,6 +382,41 @@ void ApplySettingsFile() {
                 (key == "swapwrite" ? Vulkan::ps4_swapwrite : Vulkan::ps4_swapview) = mask;
             } else {
                 known = false;
+            }
+        } else if (key == "swaphash" && value.size() == 1 && value[0] >= '0' && value[0] <= '9') {
+            Vulkan::ps4_swaphash = value[0] - '0'; // diagnosis: flips views whose hash has this bit
+        } else if (key == "flipsize") {
+            // flipsize=176x128,152x128:51 : reverse the swap decision for those image sizes
+            // (optional :N = Vulkan format number as seen in the PS4 view log).
+            std::string rest = value;
+            while (!rest.empty()) {
+                const size_t comma = rest.find(',');
+                const std::string item = rest.substr(0, comma);
+                rest = comma == std::string::npos ? std::string() : rest.substr(comma + 1);
+                unsigned w = 0, h = 0;
+                int vk = -1;
+                if (std::sscanf(item.c_str(), "%ux%u:%d", &w, &h, &vk) >= 2 ||
+                    std::sscanf(item.c_str(), "%ux%u", &w, &h) == 2) {
+                    Vulkan::Ps4AddFlipRule(w, h, vk);
+                } else {
+                    known = false;
+                }
+            }
+        } else if (key == "hashsize" || key == "hashnot") {
+            // hashsize=WxH,... : swaphash only touches these sizes; hashnot= : everything but them
+            std::string rest = value;
+            while (!rest.empty()) {
+                const size_t comma = rest.find(',');
+                const std::string item = rest.substr(0, comma);
+                rest = comma == std::string::npos ? std::string() : rest.substr(comma + 1);
+                unsigned w = 0, h = 0;
+                int vk = -1;
+                if (std::sscanf(item.c_str(), "%ux%u:%d", &w, &h, &vk) >= 2 ||
+                    std::sscanf(item.c_str(), "%ux%u", &w, &h) == 2) {
+                    Vulkan::Ps4AddHashRule(w, h, vk, key == "hashnot");
+                } else {
+                    known = false;
+                }
             }
         } else if (key == "rg" && (value == "auto" || value == "on" || value == "off")) {
             Vulkan::ps4_rg_mode = value == "auto" ? 0 : value == "on" ? 1 : 2;
