@@ -1,0 +1,37 @@
+From 5f760b619f6b177dfd3c6493e15f65765909a0a8 Mon Sep 17 00:00:00 2001
+From: t <t@t>
+Date: Sat, 31 Oct 2026 13:05:31 -0300
+Subject: [PATCH] PS4: color lab: the PS4 view log also prints the image flags,
+ type, levels and layers
+
+Image origin (converted, GPU-written, CPU-uploaded) can then be told apart per image. Log cap raised.
+---
+ src/video_core/renderer_vulkan/vk_texture_cache.cpp | 7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/src/video_core/renderer_vulkan/vk_texture_cache.cpp b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+index 7db0267..b54bd46 100644
+--- a/src/video_core/renderer_vulkan/vk_texture_cache.cpp
++++ b/src/video_core/renderer_vulkan/vk_texture_cache.cpp
+@@ -3681,14 +3681,15 @@ ImageView::ImageView(TextureCacheRuntime& runtime, const VideoCommon::ImageViewI
+         std::scoped_lock lock{seen_mutex};
+         const u64 seen_key = id ^ (size_key * 0x9E3779B97F4A7C15ull) ^
+                              (u64(log_hash) * 0xC2B2AE3D27D4EB4Full);
+-        if (seen.size() < 4000 && std::find(seen.begin(), seen.end(), seen_key) == seen.end()) {
++        if (seen.size() < 12000 && std::find(seen.begin(), seen.end(), seen_key) == seen.end()) {
+             seen.push_back(seen_key);
+             LOG_INFO(Render_Vulkan,
+-                     "PS4 view: guest {} on image {} -> vk {} swizzle {},{},{},{} rt={} {}x{} hash={:03x} addr={:x}",
++                     "PS4 view: guest {} on image {} -> vk {} swizzle {},{},{},{} rt={} {}x{} hash={:03x} addr={:x} flags={:x} type={} lv={} ly={}",
+                      u32(format), u32(image.info.format), u32(format_info.format),
+                      u32(swizzle[0]), u32(swizzle[1]), u32(swizzle[2]), u32(swizzle[3]),
+                      info.IsRenderTarget(), image.info.size.width, image.info.size.height, log_hash,
+-                     u64(image.gpu_addr));
++                     u64(image.gpu_addr), u32(image.flags), u32(image.info.type),
++                     image.info.resources.levels, image.info.resources.layers);
+         }
+     }
+ #endif
+-- 
+2.43.0
+

@@ -39,6 +39,12 @@ SDK `orbis-sdk-v1` and of the toolchain, among them:
 `sce_module/libc.prx`, `sce_module/libSceFios2.prx` and `sce_sys/about/right.sprx` from the
 OpenOrbis toolchain's samples, as OpenOrbis homebrew packages do.
 
-Corresponding source for the release: this repository at tag `v0.1.0`, Eden at commit
+Corresponding source for the release: this repository at the tag of that release (`v0.1.0`, `v1.01`), Eden at commit
 `5f142c7926d0c7fcbbd0ce30794d72f638a43b2a` (`scripts/fetch-eden.sh`), the SDK release
 `orbis-sdk-v1`, OpenSSL 3.6.2 and FFmpeg `c7b5f1537d` with the options in `docs/BUILDING.md`.
+
+## Acknowledgements
+
+- **Eden4** by **xatyy**: an independent Eden port for PS4, used as a reference for ideas. No Eden4 code is included here.
+- **Lichii** by **zortos293**: an experimental Switch / Switch 2 emulator, read as a reference for Switch 2 research. No Lichii code is included here.
+- The icon was made by **@titotostito_**.

@@ -45,7 +45,7 @@ FILES="$FILES assets/misc/hbmenu.nro assets/misc/hbmenu-LICENSE.txt"
     "$P" sfo_new $SFO >/dev/null
     s() { "$P" sfo_setentry $SFO "$1" --type "$2" --maxsize "$3" --value "$4" >/dev/null; }
     s APP_TYPE Integer 4 1
-    s APP_VER Utf8 8 "01.00"
+    s APP_VER Utf8 8 "01.01"
     s ATTRIBUTE Integer 4 0
     s CATEGORY Utf8 4 gd
     s SYSTEM_VER Integer 4 0
@@ -53,7 +53,7 @@ FILES="$FILES assets/misc/hbmenu.nro assets/misc/hbmenu-LICENSE.txt"
     s DOWNLOAD_DATA_SIZE Integer 4 0
     s TITLE Utf8 128 "$TITLE"
     s TITLE_ID Utf8 12 "$TITLE_ID"
-    s VERSION Utf8 8 "01.00"
+    s VERSION Utf8 8 "01.01"
     "$BIN/create-gp4.exe" -out pkg.gp4 --content-id="$CID" --files "$FILES" >/dev/null
     "$P" pkg_build pkg.gp4 "$(cygpath -m "$OUT")" >/dev/null
 )

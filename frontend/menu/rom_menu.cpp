@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <string>
 #include <thread>
 #include <vector>
@@ -105,6 +106,58 @@ struct Canvas {
     }
 };
 
+// The font is plain ASCII, so the Portuguese and Spanish texts have no accents.
+struct Texts {
+    const char* tagline;
+    const char* controls;
+    const char* language_name;
+    const char* internal_name;
+    const char* external_name;
+};
+
+constexpr Texts TextsEn = {"Switch emulator for PS4  -  choose a game",
+                           "Up/Down: choose    X: play    Triangle: language", "English",
+                           "Console", "USB drive"};
+constexpr Texts TextsPt = {"Emulador de Switch para PS4  -  escolha um jogo",
+                           "Cima/Baixo: escolher    X: jogar    Triangulo: idioma", "Portugues",
+                           "Console", "HD/USB"};
+constexpr Texts TextsEs = {"Emulador de Switch para PS4  -  elige un juego",
+                           "Arriba/Abajo: elegir    X: jugar    Triangulo: idioma", "Espanol",
+                           "Consola", "USB/HD"};
+constexpr const char* LanguageCodes[3] = {"en", "pt", "es"};
+
+int language = 0; // 0 = English, 1 = Portuguese, 2 = Spanish
+
+const Texts& Tx() {
+    return language == 1 ? TextsPt : (language == 2 ? TextsEs : TextsEn);
+}
+
+std::string LanguageFile() {
+    return std::string(Ps4::DataDir) + "/lang.txt";
+}
+
+void LoadLanguage() {
+    if (FILE* f = std::fopen(LanguageFile().c_str(), "r")) {
+        char code[8] = {};
+        if (std::fgets(code, sizeof(code), f) != nullptr) {
+            for (int i = 0; i < 3; ++i) {
+                if (std::strncmp(code, LanguageCodes[i], 2) == 0) {
+                    language = i;
+                }
+            }
+        }
+        std::fclose(f);
+    }
+}
+
+void SaveLanguage() {
+    if (FILE* f = std::fopen(LanguageFile().c_str(), "w")) {
+        std::fputs(LanguageCodes[language], f);
+        std::fputc('\n', f);
+        std::fclose(f);
+    }
+}
+
 std::string DisplayName(const std::string& file) {
     std::string name = file;
     if (const auto dot = name.find_last_of('.'); dot != std::string::npos && dot > 0) {
@@ -113,21 +166,26 @@ std::string DisplayName(const std::string& file) {
     return name;
 }
 
-void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
+void Draw(Canvas& c, const std::vector<MenuEntry>& entries, int selected) {
     constexpr int Left = 120;
     constexpr int RowHeight = 56;
     constexpr int ListTop = 250;
     constexpr int Rows = 12;
-    constexpr size_t MaxChars = (Width - 2 * Left - 40) / MenuFont::Width;
+    constexpr int TagChars = 6; // "USB0" plus a gap
+    constexpr size_t MaxChars = (Width - 2 * Left - 40) / MenuFont::Width - TagChars;
     constexpr uint32_t Accent = 0xFF6FD3FF;
     c.Fill(0, 0, Width, Height, Background);
     // Header: name, then what it is.
     c.Fill(Left, 70, 10, 100, Accent);
     c.Print(Left + 36, 60, "ORBIS EDEN", 0xFFFFFFFF, Background);
-    c.Print(Left + 36, 112, "Switch emulator for PS4  -  choose a game", Dim, Background);
+    c.Print(Left + 36, 112, Tx().tagline, Dim, Background);
+    {
+        const std::string lang = std::string(Tx().language_name);
+        c.Print(Width - Left - int(lang.size()) * MenuFont::Width, 70, lang, Accent, Background);
+    }
     c.Fill(Left, 190, Width - 2 * Left, 3, Dim);
 
-    const int count = int(names.size());
+    const int count = int(entries.size());
     const int first = std::clamp(selected - Rows / 2, 0, std::max(count - Rows, 0));
     for (int row = 0; row < Rows && first + row < count; ++row) {
         const int index = first + row;
@@ -137,8 +195,10 @@ void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
             c.Fill(Left, y - 8, Width - 2 * Left, RowHeight - 4, Highlight);
             c.Fill(Left, y - 8, 10, RowHeight - 4, Accent);
         }
-        c.Print(Left + 30, y, DisplayName(names[index]), on ? 0xFFFFFFFF : Text,
-                on ? Highlight : Background, MaxChars);
+        const uint32_t row_color = on ? Highlight : Background;
+        c.Print(Left + 30, y, entries[index].source, on ? 0xFFFFFFFF : Accent, row_color);
+        c.Print(Left + 30 + TagChars * MenuFont::Width, y, DisplayName(entries[index].name),
+                on ? 0xFFFFFFFF : Text, row_color, MaxChars);
     }
     if (first > 0) {
         c.Print(Width - Left - MenuFont::Width, ListTop - 50, "^", Dim, Background);
@@ -148,7 +208,7 @@ void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
     }
     // Footer: controls, position, credits.
     c.Fill(Left, Height - 170, Width - 2 * Left, 3, Dim);
-    c.Print(Left, Height - 150, "Up/Down: choose    X: play", Text, Background);
+    c.Print(Left, Height - 150, Tx().controls, Text, Background);
     char position[32];
     std::snprintf(position, sizeof(position), "%d / %d", selected + 1, count);
     c.Print(Width - Left - int(std::strlen(position)) * MenuFont::Width, Height - 150, position,
@@ -156,13 +216,13 @@ void Draw(Canvas& c, const std::vector<std::string>& names, int selected) {
     c.Print(Left, Height - 105,
             "Mr.Kitsune9, @blorbus0866, @titotostito_ (icon), @loony_user, Claude",
             Dim, Background);
-    c.Print(Left, Height - 65, "Based on NX on Orbis by Alejo  -  built on Eden (not affiliated)",
-            Dim, Background);
+    c.Print(Left, Height - 65, "Based on NX on Orbis by Alejo  -  Reference: xatyy (Eden4)", Dim,
+            Background);
 }
 
 } // Anonymous namespace
 
-int RunRomMenu(const std::vector<std::string>& names, int initial) {
+int RunRomMenu(const std::vector<MenuEntry>& names, int initial) {
     if (names.empty()) {
         return -1;
     }
@@ -199,7 +259,8 @@ int RunRomMenu(const std::vector<std::string>& names, int initial) {
         sceKernelReleaseDirectMemory(phys, TotalBytes);
         return -1;
     }
-    Ps4::Log("menu: %zu games listed", names.size());
+    LoadLanguage();
+    Ps4::Log("menu: %zu games listed, language %s", names.size(), LanguageCodes[language]);
 
     int selected = std::clamp(initial, 0, int(names.size()) - 1);
     int back = 0;
@@ -228,6 +289,11 @@ int RunRomMenu(const std::vector<std::string>& names, int initial) {
         previous = now;
         if (pressed & Ps4::Button::Cross) {
             break;
+        }
+        if (pressed & Ps4::Button::Triangle) {
+            language = (language + 1) % 3;
+            SaveLanguage();
+            present();
         }
         int step = 0;
         const std::uint32_t vertical = now & (Ps4::Button::Up | Ps4::Button::Down);

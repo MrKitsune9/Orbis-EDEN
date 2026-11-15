@@ -8,7 +8,9 @@
 //   keys/prod.keys (+ title.keys)     the console's keys, dumped from the user's Switch
 //   firmware/*.nca                    the firmware, dumped from the user's Switch (copied into
 //                                     nand/system/Contents/registered the first time)
-//   roms/*.nsp|*.xci                  listed in a menu at start (Up/Down, Cross), the last one
+//   roms/*.nsp|*.xci                  listed in a menu at start (Up/Down, Cross; Triangle changes
+//                                     the language), also found on external drives: /mnt/usb0..7
+//                                     (their root and roms, games, switch folders), the last one
 //                                     played preselected, unless game.txt names one
 //                                     (with neither, the bundled Homebrew Menu starts)
 //   game.txt                          optional: the full path of the game to start
@@ -31,6 +33,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -110,6 +113,67 @@ bool HasExtension(const fs::path& p, std::initializer_list<const char*> exts) {
     return std::any_of(exts.begin(), exts.end(), [&](const char* x) { return e == x; });
 }
 
+/// A game found on the console's own storage (roms/) or on an external drive (/mnt/usb0..7).
+struct GameFile {
+    fs::path path;
+    std::string source; // "INT" or "USB0".."USB7", shown in the menu
+};
+
+/// Adds the game files directly inside `dir` (no recursion). Names starting with '.' are skipped
+/// (macOS leaves "._name.nsp" files on drives it has written to). A folder is only listed once,
+/// even where the drive's file system ignores case ("roms" and "ROMs" are the same folder).
+void ScanFolder(const fs::path& dir, const std::string& source, std::vector<GameFile>& out,
+                std::set<std::string>& seen) {
+    std::error_code ec;
+    for (fs::directory_iterator it{dir, ec}, end; !ec && it != end; it.increment(ec)) {
+        const fs::path& file = it->path();
+        if (file.filename().string().starts_with('.') || !it->is_regular_file(ec) ||
+            !HasExtension(file, {".nsp", ".xci", ".nro", ".nso", ".nca"})) {
+            continue;
+        }
+        std::string key = file.string();
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (seen.insert(key).second) {
+            out.push_back({file, source});
+        }
+    }
+}
+
+/// Internal games first, then each external drive that is plugged in; by name within each.
+std::vector<GameFile> ScanGames() {
+    const fs::path data{Ps4::DataDir};
+    std::vector<GameFile> games;
+    std::set<std::string> seen;
+    ScanFolder(data / "roms", "INT", games, seen);
+    std::sort(games.begin(), games.end(), [](const GameFile& a, const GameFile& b) { return a.path < b.path; });
+    {
+        // Diagnosis: what the console shows under /mnt, so a drive that is not at /mnt/usbN can be found.
+        std::error_code ec;
+        std::string names;
+        for (fs::directory_iterator it{"/mnt", ec}, end; !ec && it != end; it.increment(ec)) {
+            names += (names.empty() ? "" : ", ") + it->path().filename().string();
+        }
+        Ps4::Log("/mnt holds: %s", ec ? "(cannot be opened)" : names.empty() ? "(nothing)" : names.c_str());
+    }
+    for (int n = 0; n < 8; ++n) {
+        const fs::path root = "/mnt/usb" + std::to_string(n);
+        std::error_code ec;
+        if (!fs::is_directory(root, ec)) {
+            continue;
+        }
+        const std::string tag = "USB" + std::to_string(n);
+        std::vector<GameFile> found;
+        ScanFolder(root, tag, found, seen);
+        for (const char* sub : {"roms", "ROMs", "games", "Games", "switch", "Switch", "nsp", "NSP"}) {
+            ScanFolder(root / sub, tag, found, seen);
+        }
+        std::sort(found.begin(), found.end(), [](const GameFile& a, const GameFile& b) { return a.path < b.path; });
+        Ps4::Log("%s: %zu game file(s) on the external drive", tag.c_str(), found.size());
+        games.insert(games.end(), found.begin(), found.end());
+    }
+    return games;
+}
+
 std::string FindGame() {
     const fs::path data{Ps4::DataDir};
     std::error_code ec;
@@ -124,41 +188,49 @@ std::string FindGame() {
         }
         Ps4::Log("game.txt names '%s', which is not a file", line.c_str());
     }
-    std::vector<fs::path> games;
-    for (fs::directory_iterator it{data / "roms", ec}, end; !ec && it != end; it.increment(ec)) {
-        if (it->is_regular_file(ec) && HasExtension(it->path(), {".nsp", ".xci", ".nro", ".nso", ".nca"})) {
-            games.push_back(it->path());
-        }
-    }
-    std::sort(games.begin(), games.end());
+    const std::vector<GameFile> games = ScanGames();
     if (!games.empty()) {
-        // The last game played is preselected in the menu (menu/rom_menu.cpp).
+        // The last game played is preselected in the menu (menu/rom_menu.cpp). It is remembered by
+        // its full path, so the same file name on two drives is not confused (older versions
+        // stored only the file name, which is still understood).
         const fs::path last_file = data / "last_game.txt";
         size_t index = 0;
         if (std::ifstream in{last_file}; in) {
             std::string last;
             std::getline(in, last);
+            while (!last.empty() && (last.back() == '\r' || last.back() == ' ')) {
+                last.pop_back();
+            }
+            bool exact = false;
             for (size_t i = 0; i < games.size(); ++i) {
-                if (games[i].filename().string() == last) {
+                if (games[i].path.string() == last) {
                     index = i;
+                    exact = true;
+                    break;
+                }
+            }
+            for (size_t i = 0; i < games.size() && !exact; ++i) {
+                if (games[i].path.filename().string() == last) {
+                    index = i;
+                    break;
                 }
             }
         }
-        std::vector<std::string> names;
+        std::vector<MenuEntry> entries;
         for (const auto& game : games) {
-            names.push_back(game.filename().string());
+            entries.push_back({game.path.filename().string(), game.source});
         }
         Ps4::SetPadLight(255, 255, 255);
         // nomenu.txt skips the menu (in case Eden cannot open the display after it).
-        if (const int chosen = fs::exists(data / "nomenu.txt", ec) ? -1 : RunRomMenu(names, int(index));
+        if (const int chosen = fs::exists(data / "nomenu.txt", ec) ? -1 : RunRomMenu(entries, int(index));
             chosen >= 0) {
             index = size_t(chosen);
         }
         if (std::ofstream out{last_file}; out) {
-            out << games[index].filename().string() << '\n';
+            out << games[index].path.string() << '\n';
         }
-        Ps4::Log("game %zu of %zu in roms/", index + 1, games.size());
-        return games[index].string();
+        Ps4::Log("game %zu of %zu (%s)", index + 1, games.size(), games[index].source.c_str());
+        return games[index].path.string();
     }
     // Nothing of the user's: the Homebrew Menu (switchbrew/nx-hbmenu, ISC) that ships in the
     // package, which needs no keys or firmware - a first test of CPU, GPU and presentation.
@@ -340,11 +412,28 @@ bool ParseSwapTokens(const std::string& value, bool write, u32& out) {
 ///   vertex_input_dynamic=on|off (default on)
 ///   gpu_accuracy=low|high       (default low)
 ///   reactive_flushing=on|off    (default off)
-///   profile=on|off              sampling profiler in boot.log (default on)
+///   profile=on|off              sampling profiler in boot.log (default off)
+///   cpu_accuracy=auto|accurate|unsafe  JIT floating-point accuracy (default auto)
 ///   async_shaders=on|off        (default on)
 ///   env=NAME=VALUE              environment for the PS4 driver (e.g. env=RADV_DEBUG=info,nohiz)
+/// The best known configuration, written to settings.txt the first time the app runs so that a new
+/// install works out of the box. An existing settings.txt is never touched.
+constexpr const char* DefaultSettingsText =
+    "# Orbis Eden - default settings (created on first run; edit freely, delete to get this file back)\n"
+    "# Colors in Mario Kart 8 Deluxe: the best configuration found so far (some colors are still wrong).\n"
+    "swapview=a8s,a8uf,a2l\n"
+    "swapwrite=depth\n";
+
 void ApplySettingsFile() {
-    std::ifstream in{fs::path{Ps4::DataDir} / "settings.txt"};
+    const fs::path settings_path = fs::path{Ps4::DataDir} / "settings.txt";
+    std::error_code exists_ec;
+    if (!fs::exists(settings_path, exists_ec)) {
+        if (std::ofstream out{settings_path}; out) {
+            out << DefaultSettingsText;
+            Ps4::Log("settings.txt did not exist: the default one was created");
+        }
+    }
+    std::ifstream in{settings_path};
     if (!in) {
         return;
     }
@@ -368,6 +457,11 @@ void ApplySettingsFile() {
                                                         : Settings::AstcDecodeMode::CpuAsynchronous);
         } else if (key == "bgra" && (value == "auto" || value == "on" || value == "off")) {
             Vulkan::ps4_bgra_mode = value == "auto" ? 0 : value == "on" ? 1 : 2;
+        } else if (key == "cpu_accuracy" &&
+                   (value == "auto" || value == "accurate" || value == "unsafe")) {
+            v.cpu_accuracy.SetValue(value == "auto"       ? Settings::CpuAccuracy::Auto
+                                    : value == "accurate" ? Settings::CpuAccuracy::Accurate
+                                                          : Settings::CpuAccuracy::Unsafe);
         } else if (key == "profile" && (value == "on" || value == "off")) {
             Ps4::SetProfiling(value == "on");
         } else if (key == "reactive_flushing" && (value == "on" || value == "off")) {
@@ -541,7 +635,7 @@ void CheckMutexes() {
 int main() {
     Ps4::OpenBootLog();
     Ps4::Log("eden-ps4 starting (Eden %s %s)", Common::g_scm_branch, Common::g_scm_desc);
-    Ps4::Log("PS4 build: %s; test 22: speed - btver2 build, gpu_accuracy low, no reactive flushing, texture audit off, profiler; defaults CPU ASTC, swizzle test off",
+    Ps4::Log("PS4 build: %s; v1.01-pre: speed - btver2 build, gpu_accuracy low, no reactive flushing, texture audit off, profiler off; defaults CPU ASTC, swizzle test off",
              EDEN_PS4_BUILD_ID);
     Ps4::InstallCrashReporting();
     Ps4::StartWatchdog();
@@ -583,7 +677,7 @@ int main() {
 
     const std::string game = FindGame();
     if (game.empty()) {
-        Ps4::Log("no game: put an .nsp or .xci in %s/roms (or its path in game.txt)", Ps4::DataDir);
+        Ps4::Log("no game: put an .nsp or .xci in %s/roms or on an external drive (or its path in game.txt)", Ps4::DataDir);
         Ps4::SetPadLight(255, 0, 0);
         std::this_thread::sleep_for(std::chrono::seconds(5));
         return 1;
@@ -597,6 +691,7 @@ int main() {
 
     Ps4::SetPhase("core init");
     ApplyPs4Settings();
+    Ps4::SetProfiling(false); // off unless settings.txt says profile=on
     ApplySettingsFile();
     Core::System system;
     system.Initialize();
