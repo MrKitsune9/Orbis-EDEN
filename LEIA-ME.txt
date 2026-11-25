@@ -30,3 +30,26 @@ NOVO (settings.txt de fabrica)
   configuracao de cores conhecida (swapview=a8s,a8uf,a2l / swapwrite=depth). Quem ja tem
   settings.txt continua com o seu. Para voltar ao padrao: apague o settings.txt e abra o app.
 - O boot.log mostra "settings.txt did not exist: the default one was created" quando isso acontece.
+
+NOVO (backup automatico dos saves - ideia vista no projeto ps4-switch-emu)
+- Antes de cada jogo abrir, se os saves mudaram desde o ultimo backup, o app copia
+  nand/user/save para /data/edenps4/save-backups/<numero>/save e guarda so os 3 ultimos.
+- Se a pasta de saves passar de 256 MiB, o backup e pulado. O boot.log mostra "save backup: ...".
+- Para restaurar: copie o conteudo de save-backups/<numero>/save de volta para nand/user/save.
+- Se o compilador reclamar desta parte, me mande a mensagem (nao consegui compilar daqui).
+
+NOVO (ideias vistas no ps4-switch-emu, feitas do nosso jeito)
+1) Configuracao por jogo: crie a pasta /data/edenps4/settings/ (o app cria sozinho) e coloque ali um
+   arquivo .txt com as mesmas linhas do settings.txt. Ele vale para o jogo cujo nome de arquivo contem
+   o nome do .txt (sem diferenciar maiusculas). Pode usar o ID do jogo, ex.:
+      settings/0100152000022000.txt     (para "Mario Kart 8 Deluxe [0100152000022000]...")
+   Aplicado DEPOIS do settings.txt. O boot.log mostra "per-game settings: <arquivo>".
+2) Cronometro de carregamento: o boot.log agora tem "load timer: ... first frames within X s" e
+   "30 fps or more within X s" (contado a partir de escolher o jogo no menu). Enquanto nao chega a
+   30 fps, a linha "status:" sai a cada 5 s (depois, a cada 10 s).
+3) tools/analyze-boot.py: resume um boot.log (fases, tempos, fps, uso de CPU). No PC:
+      python tools/analyze-boot.py boot.log
+   (precisa do Python; e so leitura). Se quiser, me mande o boot.log que eu rodo por voce.
+
+NAO FEITO: overlay de fps na tela (precisa mexer no desenho do jogo, sem como testar daqui) e
+"Spread game threads" (nao tenho como saber o que ele faz sem o codigo deles).

@@ -26,7 +26,10 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
+#include <cstdint>
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -242,6 +245,69 @@ std::string FindGame() {
     return {};
 }
 
+/// Copies the games' saves to save-backups/<seconds>/ before a game starts, when they changed since the
+/// last backup, and keeps the newest three. Saves are small; a save folder over 256 MiB is skipped.
+void BackupSaves() {
+    namespace fsys = std::filesystem;
+    const fsys::path source = Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir) / "user/save";
+    const fsys::path root = fsys::path{Ps4::DataDir} / "save-backups";
+    std::error_code ec;
+    if (!fsys::is_directory(source, ec)) {
+        return;
+    }
+    std::uint64_t files = 0, bytes = 0, stamp = 0;
+    for (fsys::recursive_directory_iterator it{source, ec}, end; !ec && it != end; it.increment(ec)) {
+        std::error_code fec;
+        if (it->is_regular_file(fec)) {
+            ++files;
+            bytes += static_cast<std::uint64_t>(it->file_size(fec));
+            stamp += static_cast<std::uint64_t>(it->last_write_time(fec).time_since_epoch().count());
+        }
+    }
+    if (ec || files == 0 || bytes > (256ull << 20)) {
+        Ps4::Log("save backup skipped (%llu files, %llu KiB%s)", (unsigned long long)files,
+                 (unsigned long long)(bytes >> 10), ec ? ", folder could not be read" : "");
+        return;
+    }
+    char signature[96];
+    std::snprintf(signature, sizeof(signature), "%llu %llu %llu\n", (unsigned long long)files,
+                  (unsigned long long)bytes, (unsigned long long)stamp);
+
+    std::vector<fsys::path> backups;
+    for (fsys::directory_iterator it{root, ec}, end; !ec && it != end; it.increment(ec)) {
+        backups.push_back(it->path());
+    }
+    ec.clear();
+    std::sort(backups.begin(), backups.end());
+    if (!backups.empty()) {
+        std::ifstream last{backups.back() / ".signature"};
+        std::string old;
+        std::getline(last, old);
+        if (old + "\n" == signature) {
+            Ps4::Log("save backup: saves unchanged since the last backup");
+            return;
+        }
+    }
+    char name[32];
+    std::snprintf(name, sizeof(name), "%012llu", (unsigned long long)std::time(nullptr));
+    const fsys::path target = root / name;
+    fsys::create_directories(target, ec);
+    fsys::copy(source, target / "save", fsys::copy_options::recursive, ec);
+    if (ec) {
+        Ps4::Log("save backup failed: %s", ec.message().c_str());
+        return;
+    }
+    std::ofstream{target / ".signature"} << signature;
+    backups.push_back(target);
+    std::sort(backups.begin(), backups.end());
+    while (backups.size() > 3) {
+        fsys::remove_all(backups.front(), ec);
+        backups.erase(backups.begin());
+    }
+    Ps4::Log("save backup: %llu files, %llu KiB copied to save-backups/%s", (unsigned long long)files,
+             (unsigned long long)(bytes >> 10), name);
+}
+
 /// The firmware is read from nand/system/Contents/registered. A dump in firmware/ is copied there
 /// the first time (and again if a file is missing or has another size).
 void InstallFirmware() {
@@ -424,10 +490,35 @@ constexpr const char* DefaultSettingsText =
     "swapview=a8s,a8uf,a2l\n"
     "swapwrite=depth\n";
 
-void ApplySettingsFile() {
-    const fs::path settings_path = fs::path{Ps4::DataDir} / "settings.txt";
+void ApplySettingsFile(const fs::path& settings_path, bool create_default);
+
+/// Per-game settings: every settings/<name>.txt whose name appears in the game's file name (without
+/// regard to case) is applied after settings.txt, so one game can have its own options. A title id
+/// works as a name, e.g. settings/0100152000022000.txt for the game "... [0100152000022000] ...".
+void ApplyGameSettings(const std::string& game) {
+    std::string stem = fs::path{game}.stem().string();
+    std::transform(stem.begin(), stem.end(), stem.begin(), [](unsigned char c) { return std::tolower(c); });
+    std::vector<fs::path> files;
+    std::error_code ec;
+    for (fs::directory_iterator it{fs::path{Ps4::DataDir} / "settings", ec}, end; !ec && it != end; it.increment(ec)) {
+        if (it->path().extension() == ".txt") {
+            std::string name = it->path().stem().string();
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+            if (!name.empty() && stem.find(name) != std::string::npos) {
+                files.push_back(it->path());
+            }
+        }
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) {
+        Ps4::Log("per-game settings: %s", file.filename().string().c_str());
+        ApplySettingsFile(file, false);
+    }
+}
+
+void ApplySettingsFile(const fs::path& settings_path, bool create_default) {
     std::error_code exists_ec;
-    if (!fs::exists(settings_path, exists_ec)) {
+    if (create_default && !fs::exists(settings_path, exists_ec)) {
         if (std::ofstream out{settings_path}; out) {
             out << DefaultSettingsText;
             Ps4::Log("settings.txt did not exist: the default one was created");
@@ -532,7 +623,7 @@ void ApplySettingsFile() {
         } else {
             known = false;
         }
-        Ps4::Log("settings.txt: %s=%s%s", key.c_str(), value.c_str(), known ? "" : " (unknown, ignored)");
+        Ps4::Log("%s: %s=%s%s", settings_path.filename().string().c_str(), key.c_str(), value.c_str(), known ? "" : " (unknown, ignored)");
     }
 }
 
@@ -663,7 +754,7 @@ int main() {
     }
 
     std::error_code ec;
-    for (const char* sub : {"keys", "firmware", "roms", "updates"}) {
+    for (const char* sub : {"keys", "firmware", "roms", "updates", "settings"}) {
         fs::create_directories(fs::path{Ps4::DataDir} / sub, ec);
     }
 
@@ -682,17 +773,21 @@ int main() {
         std::this_thread::sleep_for(std::chrono::seconds(5));
         return 1;
     }
+    const std::uint64_t game_chosen_us = Ps4::NowUs();
     Ps4::Log("game: %s", game.c_str());
     if (!fs::exists(fs::path{Ps4::DataDir} / "keys/prod.keys", ec)) {
         Ps4::Log("missing %s/keys/prod.keys - dump it from your Switch", Ps4::DataDir);
     }
+    Ps4::SetPhase("save backup");
+    BackupSaves();
     Ps4::SetPhase("firmware");
     InstallFirmware();
 
     Ps4::SetPhase("core init");
     ApplyPs4Settings();
     Ps4::SetProfiling(false); // off unless settings.txt says profile=on
-    ApplySettingsFile();
+    ApplySettingsFile(fs::path{Ps4::DataDir} / "settings.txt", true);
+    ApplyGameSettings(game);
     Core::System system;
     system.Initialize();
     InputCommon::InputSubsystem input;
@@ -758,6 +853,7 @@ int main() {
     std::uint64_t quit_since = 0;
     std::uint64_t last_status = Ps4::NowUs();
     unsigned status_count = 0;
+    bool seen_first_frame = false, seen_30_fps = false; // load timer, counted from the game being chosen
     for (;;) {
         {
             std::unique_lock lock{exit_mutex};
@@ -779,10 +875,20 @@ int main() {
             Ps4::Log("quit combo held");
             break;
         }
-        if (Ps4::NowUs() - last_status > 10000000) {
+        if (Ps4::NowUs() - last_status > (seen_30_fps ? 10000000u : 5000000u)) {
             last_status = Ps4::NowUs();
             const auto perf = system.GetAndResetPerfStats();
             const auto mem = Common::Orbis::GetStats();
+            if (!seen_first_frame && perf.average_game_fps > 0.5) {
+                seen_first_frame = true;
+                Ps4::Log("load timer: the game drew its first frames within %.0f s of being chosen",
+                         (Ps4::NowUs() - game_chosen_us) / 1e6);
+            }
+            if (!seen_30_fps && perf.average_game_fps >= 30.0) {
+                seen_30_fps = true;
+                Ps4::Log("load timer: 30 fps or more within %.0f s of being chosen (status lines are 5 s apart)",
+                         (Ps4::NowUs() - game_chosen_us) / 1e6);
+            }
             Ps4::Log("status: game %.1f fps, speed %.0f%%, frame %.1f ms, guest+tables %lu MiB committed (%lu MiB given back), %lu MiB direct free",
                      perf.average_game_fps, perf.emulation_speed * 100.0, perf.frametime * 1000.0,
                      static_cast<unsigned long>(mem.committed_bytes >> 20),
